@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { periodRange, shiftDate, sortTasks, todayInIndia } from "./date";
+import { isTaskOverdue, normalizeTargetDate, periodRange, shiftDate, sortTasks, todayInIndia } from "./date";
 import type { Task } from "./types";
 
 const task = (overrides: Partial<Task>): Task => ({
   id: crypto.randomUUID(),
   title: "Task",
   dueDate: "2026-09-18",
+  planType: "Daily",
   priority: "Medium",
   status: "Open",
   completedAt: null,
@@ -25,6 +26,20 @@ describe("planner dates", () => {
 
   it("resolves the current date in Asia/Kolkata", () => {
     expect(todayInIndia(new Date("2026-09-17T20:00:00Z"))).toBe("2026-09-18");
+  });
+
+  it("normalizes weekly and monthly targets", () => {
+    expect(normalizeTargetDate("2026-09-18", "Weekly")).toBe("2026-09-14");
+    expect(normalizeTargetDate("2026-09-18", "Monthly")).toBe("2026-09-01");
+  });
+
+  it("waits until a goal period ends before marking it overdue", () => {
+    const weekly = task({ dueDate: "2026-09-14", planType: "Weekly" });
+    const monthly = task({ dueDate: "2026-09-01", planType: "Monthly" });
+    expect(isTaskOverdue(weekly, "2026-09-20")).toBe(false);
+    expect(isTaskOverdue(weekly, "2026-09-21")).toBe(true);
+    expect(isTaskOverdue(monthly, "2026-09-30")).toBe(false);
+    expect(isTaskOverdue(monthly, "2026-10-01")).toBe(true);
   });
 });
 

@@ -4,12 +4,15 @@ import {
   formatLong,
   formatShort,
   groupTasks,
+  isTaskOverdue,
   periodLabel,
+  periodRange,
   shiftDate,
   sortTasks,
+  targetLabel,
   todayInIndia,
 } from "./date";
-import type { DashboardResponse, Habit, Period, Priority, Task, TaskInput } from "./types";
+import type { DashboardResponse, Habit, Period, PlanType, Priority, Task, TaskInput } from "./types";
 
 const KEY_STORAGE = "daymark:access-key";
 
@@ -82,7 +85,8 @@ function App() {
       setMutationError("");
       try {
         const response = await client.createTask(accessKey, input);
-        const task = { ...response, overdue: response.status === "Open" && response.dueDate < selectedDate };
+        const referenceDate = period === "day" ? selectedDate : periodRange(selectedDate, period).start;
+        const task = { ...response, overdue: isTaskOverdue(response, referenceDate) };
         setDashboard((value) => (value ? { ...value, tasks: sortTasks([...value.tasks, task]) } : value));
         return task;
       } catch (reason) {
@@ -90,16 +94,18 @@ function App() {
         throw reason;
       }
     },
-    [accessKey, selectedDate],
+    [accessKey, period, selectedDate],
   );
 
   const updateTask = useCallback(
     async (task: Task, patch: Partial<TaskInput & { status: "Open" | "Done" }>) => {
-      const optimisticTask = {
+      const optimisticBase = {
         ...task,
         ...patch,
         completedAt: patch.status === "Done" ? new Date().toISOString() : patch.status === "Open" ? null : task.completedAt,
       };
+      const referenceDate = period === "day" ? selectedDate : periodRange(selectedDate, period).start;
+      const optimisticTask = { ...optimisticBase, overdue: isTaskOverdue(optimisticBase, referenceDate) };
       await mutate(
         () =>
           setDashboard((value) =>
@@ -109,7 +115,7 @@ function App() {
           ),
         () => client.updateTask(accessKey, task.id, patch),
         (response) => {
-          const saved = { ...response, overdue: response.status === "Open" && response.dueDate < selectedDate };
+          const saved = { ...response, overdue: isTaskOverdue(response, referenceDate) };
           setDashboard((value) =>
             value
               ? { ...value, tasks: sortTasks(value.tasks.map((item) => (item.id === task.id ? saved : item))) }
@@ -117,8 +123,9 @@ function App() {
           );
         },
       );
+      if (patch.status !== undefined || patch.dueDate !== undefined || patch.planType !== undefined) await load();
     },
-    [accessKey, mutate, selectedDate],
+    [accessKey, load, mutate, period, selectedDate],
   );
 
   const deleteTask = useCallback(
@@ -202,6 +209,11 @@ function App() {
   }
 
   const move = (direction: number) => setSelectedDate((date) => shiftDate(date, direction, period));
+  const dailyTasks = dashboard?.tasks.filter((task) => task.planType === "Daily") ?? [];
+  const periodGoals = dashboard?.tasks.filter((task) => task.planType !== "Daily") ?? [];
+  const visibleGoalType: PlanType = period === "week" ? "Weekly" : "Monthly";
+  const visibleGoals = dashboard?.tasks.filter((task) => task.planType === visibleGoalType) ?? [];
+  const referenceDate = period === "day" ? selectedDate : dashboard?.range.start ?? selectedDate;
 
   return (
     <div className="app-shell">
@@ -256,12 +268,23 @@ function App() {
         ) : dashboard && period === "day" ? (
           <div className="day-grid">
             <section className="panel task-panel">
-              <PanelHeading title="Tasks" meta={`${dashboard.tasks.filter((task) => task.status === "Open").length} open`} />
-              <TaskComposer defaultDate={selectedDate} onCreate={createTask} />
-              <TaskList tasks={dashboard.tasks} referenceDate={selectedDate} onUpdate={updateTask} onDelete={deleteTask} />
+              <PanelHeading title="Tasks" meta={`${dailyTasks.filter((task) => task.status === "Open").length} open`} />
+              <TaskComposer defaultDate={selectedDate} planType="Daily" onCreate={createTask} />
+              <TaskList tasks={dailyTasks} referenceDate={selectedDate} onUpdate={updateTask} onDelete={deleteTask} />
             </section>
 
             <aside className="side-column">
+              <section className="panel period-goals-panel">
+                <PanelHeading title="Period goals" meta={`${periodGoals.filter((task) => task.status === "Open").length} open`} />
+                <TaskList
+                  tasks={periodGoals}
+                  referenceDate={selectedDate}
+                  onUpdate={updateTask}
+                  onDelete={deleteTask}
+                  emptyTitle="No period goals"
+                  emptyDetail="Add one from the Week or Month view."
+                />
+              </section>
               <section className="panel">
                 <PanelHeading
                   title="Habits"
@@ -286,11 +309,25 @@ function App() {
             </aside>
           </div>
         ) : dashboard ? (
-          <section className="panel planning-panel">
-            <PanelHeading title={period === "week" ? "This week" : "This month"} meta={`${dashboard.tasks.length} tasks`} />
-            <TaskComposer defaultDate={selectedDate} onCreate={createTask} />
-            <GroupedTaskList tasks={dashboard.tasks} referenceDate={selectedDate} onUpdate={updateTask} onDelete={deleteTask} />
-          </section>
+          <div className="planning-stack">
+            <section className="panel">
+              <PanelHeading title={`${visibleGoalType} goals`} meta={`${visibleGoals.filter((task) => task.status === "Open").length} open`} />
+              <TaskComposer defaultDate={selectedDate} planType={visibleGoalType} onCreate={createTask} />
+              <TaskList
+                tasks={visibleGoals}
+                referenceDate={referenceDate}
+                onUpdate={updateTask}
+                onDelete={deleteTask}
+                emptyTitle={`No ${visibleGoalType.toLowerCase()} goals`}
+                emptyDetail={`Add one for this ${period}.`}
+              />
+            </section>
+            <section className="panel">
+              <PanelHeading title="Scheduled tasks" meta={`${dailyTasks.length} tasks`} />
+              <TaskComposer defaultDate={selectedDate} planType="Daily" onCreate={createTask} />
+              <GroupedTaskList tasks={dailyTasks} referenceDate={referenceDate} onUpdate={updateTask} onDelete={deleteTask} />
+            </section>
+          </div>
         ) : null}
       </main>
     </div>
@@ -339,7 +376,7 @@ function PanelHeading({ title, meta }: { title: string; meta: string }) {
   );
 }
 
-function TaskComposer({ defaultDate, onCreate }: { defaultDate: string; onCreate: (input: TaskInput) => Promise<Task> }) {
+function TaskComposer({ defaultDate, planType, onCreate }: { defaultDate: string; planType: PlanType; onCreate: (input: TaskInput) => Promise<Task> }) {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState(defaultDate);
   const [priority, setPriority] = useState<Priority>("Medium");
@@ -351,7 +388,7 @@ function TaskComposer({ defaultDate, onCreate }: { defaultDate: string; onCreate
     if (!title.trim()) return;
     setSaving(true);
     try {
-      await onCreate({ title: title.trim(), dueDate, priority });
+      await onCreate({ title: title.trim(), dueDate, priority, planType });
       setTitle("");
     } catch {
       // The page-level notice owns the error message.
@@ -361,22 +398,24 @@ function TaskComposer({ defaultDate, onCreate }: { defaultDate: string; onCreate
   };
 
   return (
-    <form className="task-composer" onSubmit={submit}>
-      <label className="sr-only" htmlFor="new-task">New task</label>
+    <form className={`task-composer ${planType !== "Daily" ? "goal-composer" : ""}`} onSubmit={submit}>
+      <label className="sr-only" htmlFor={`new-${planType}`}>New {planType.toLowerCase()} {planType === "Daily" ? "task" : "goal"}</label>
       <input
-        id="new-task"
+        id={`new-${planType}`}
         maxLength={200}
-        placeholder="Add a task…"
+        placeholder={planType === "Daily" ? "Add a task…" : `Add a ${planType.toLowerCase()} goal…`}
         value={title}
         onChange={(event) => setTitle(event.target.value)}
       />
-      <label className="sr-only" htmlFor="new-task-date">Due date</label>
-      <input id="new-task-date" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-      <label className="sr-only" htmlFor="new-task-priority">Priority</label>
-      <select id="new-task-priority" value={priority} onChange={(event) => setPriority(event.target.value as Priority)}>
+      {planType === "Daily" && <>
+        <label className="sr-only" htmlFor={`new-${planType}-date`}>Due date</label>
+        <input id={`new-${planType}-date`} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+      </>}
+      <label className="sr-only" htmlFor={`new-${planType}-priority`}>Priority</label>
+      <select id={`new-${planType}-priority`} value={priority} onChange={(event) => setPriority(event.target.value as Priority)}>
         <option>High</option><option>Medium</option><option>Low</option>
       </select>
-      <button className="add-button" type="submit" disabled={saving || !title.trim()} aria-label="Add task">
+      <button className="add-button" type="submit" disabled={saving || !title.trim()} aria-label={`Add ${planType === "Daily" ? "task" : `${planType.toLowerCase()} goal`}`}>
         {saving ? "…" : "+"}
       </button>
     </form>
@@ -388,10 +427,12 @@ interface TaskListProps {
   referenceDate: string;
   onUpdate: (task: Task, patch: Partial<TaskInput & { status: "Open" | "Done" }>) => Promise<void>;
   onDelete: (task: Task) => Promise<void>;
+  emptyTitle?: string;
+  emptyDetail?: string;
 }
 
-function TaskList({ tasks, referenceDate, onUpdate, onDelete }: TaskListProps) {
-  if (!tasks.length) return <EmptyState title="A clear day" detail="Add the first task you want to move forward." />;
+function TaskList({ tasks, referenceDate, onUpdate, onDelete, emptyTitle = "A clear day", emptyDetail = "Add the first task you want to move forward." }: TaskListProps) {
+  if (!tasks.length) return <EmptyState title={emptyTitle} detail={emptyDetail} />;
   return <div className="task-list">{sortTasks(tasks).map((task) => <TaskRow key={task.id} task={task} referenceDate={referenceDate} onUpdate={onUpdate} onDelete={onDelete} />)}</div>;
 }
 
@@ -409,7 +450,7 @@ function GroupedTaskList(props: TaskListProps) {
   );
 }
 
-function TaskRow({ task, referenceDate, onUpdate, onDelete }: { task: Task } & Omit<TaskListProps, "tasks">) {
+function TaskRow({ task, referenceDate, onUpdate, onDelete }: { task: Task } & Omit<TaskListProps, "tasks" | "emptyTitle" | "emptyDetail">) {
   const done = task.status === "Done";
   return (
     <div className={`task-row ${done ? "done" : ""}`}>
@@ -425,7 +466,9 @@ function TaskRow({ task, referenceDate, onUpdate, onDelete }: { task: Task } & O
       <div className="task-copy">
         <span className="task-title">{task.title}</span>
         <span className={`task-date ${task.overdue && !done ? "overdue" : ""}`}>
-          {task.dueDate === referenceDate ? "Today" : formatShort(task.dueDate)}
+          {task.planType === "Daily"
+            ? task.dueDate === referenceDate ? "Today" : formatShort(task.dueDate)
+            : `${task.planType} · ${targetLabel(task.dueDate, task.planType)}`}
           {task.overdue && !done ? " · overdue" : ""}
         </span>
       </div>
@@ -439,10 +482,10 @@ function TaskRow({ task, referenceDate, onUpdate, onDelete }: { task: Task } & O
       </select>
       <input
         className="row-date"
-        aria-label={`Due date for ${task.title}`}
+        aria-label={`${task.planType === "Daily" ? "Due date" : `Target ${task.planType.toLowerCase().replace("ly", "")}`} for ${task.title}`}
         type="date"
         value={task.dueDate}
-        onChange={(event) => void onUpdate(task, { dueDate: event.target.value })}
+        onChange={(event) => void onUpdate(task, { dueDate: event.target.value, planType: task.planType })}
       />
       <button className="delete-button" type="button" onClick={() => void onDelete(task)} aria-label={`Archive ${task.title}`}>×</button>
     </div>
@@ -575,9 +618,9 @@ function useWebMcp({ dashboard, createTask, toggleHabit, saveJournal, selectedDa
       name: "create_task",
       title: "Create task",
       description: "Create a task in the visible personal planner.",
-      inputSchema: { type: "object", properties: { title: { type: "string" }, dueDate: { type: "string", format: "date" }, priority: { enum: ["High", "Medium", "Low"] } }, required: ["title", "dueDate", "priority"], additionalProperties: false },
+      inputSchema: { type: "object", properties: { title: { type: "string" }, dueDate: { type: "string", format: "date" }, priority: { enum: ["High", "Medium", "Low"] }, planType: { enum: ["Daily", "Weekly", "Monthly"] } }, required: ["title", "dueDate", "priority", "planType"], additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute: async (input) => createTask({ title: String(input.title), dueDate: String(input.dueDate), priority: input.priority as Priority }),
+      execute: async (input) => createTask({ title: String(input.title), dueDate: String(input.dueDate), priority: input.priority as Priority, planType: input.planType as PlanType }),
     });
     register({
       name: "set_habit_completion",

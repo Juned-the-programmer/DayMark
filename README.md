@@ -4,13 +4,22 @@ Daymark is a private personal planner for tasks, daily habits, and journaling. T
 
 ## Features
 
-- Today view with overdue and current tasks
-- Monday-based week and month planning views
+- Today view with overdue tasks and active period goals
+- Weekly goals for a complete Monday–Sunday week
+- Monthly goals for a complete calendar month
+- Dated tasks shown separately in Week and Month
 - High, Medium, and Low task priorities
 - Daily habits with streaks
 - One autosaving journal entry per day
 - Notion sync across devices
 - Automatic overdue carry-over without changing the original due date
+
+## Planning model
+
+- **Today** contains dated daily tasks and a compact summary of current or overdue weekly/monthly goals.
+- **Week** contains goals assigned to the visible Monday–Sunday week, followed by daily tasks scheduled inside it.
+- **Month** contains goals assigned to the visible calendar month, followed by its daily scheduled tasks.
+- An unfinished goal becomes carry-over only after its complete week or month ends. Its original target period is preserved.
 
 ## How it works
 
@@ -78,6 +87,16 @@ Enter the integration token and parent page ID when prompted. The script creates
 Save the four data-source IDs printed by the script. The token is used only for the request and is not written to disk.
 
 Do not run this setup command again after the databases have been created, because it will create another set of databases.
+
+### Upgrade an existing Daymark database
+
+If Daymark was set up before period goals were added, run:
+
+```sh
+npm run upgrade:notion
+```
+
+Enter the integration token and the existing Tasks data-source ID. The command safely adds the `Plan Type` select property without recreating the database or changing existing task pages. It is safe to run again; existing tasks with no selected value continue to behave as Daily tasks.
 
 ## 3. Configure Cloudflare Workers
 
@@ -200,12 +219,19 @@ GitHub Actions tests, builds, and republishes the site automatically. Worker cha
 npm run worker:deploy
 ```
 
+When updating an existing installation to the period-goals version, use this order:
+
+1. Run `npm run upgrade:notion`.
+2. Deploy the Worker with `npm run worker:deploy`.
+3. Push the frontend changes to GitHub.
+
 ## Useful commands
 
 ```sh
 npm run dev           # Start the frontend locally
 npm test              # Run tests
 npm run build         # Create the production frontend build
+npm run upgrade:notion # Add period goals to an existing Tasks database
 npm run worker:check  # Type-check the Worker
 npm run worker:dev    # Run the Worker locally
 npm run worker:deploy # Deploy the Worker
@@ -239,6 +265,7 @@ Use Daymark's **Lock** action to remove an old key saved in the browser.
 - Confirm the parent page and created databases are still shared with the integration.
 - Confirm the Worker uses data-source IDs printed by `npm run setup:notion`, not browser URLs.
 - Re-add any incorrect Worker secret and redeploy the Worker.
+- If goal creation fails, run `npm run upgrade:notion` and confirm Tasks contains a `Plan Type` select property.
 
 ## Security notes
 
@@ -251,7 +278,7 @@ Use Daymark's **Lock** action to remove an old key saved in the browser.
 ## Current limits
 
 - Habits are daily only.
-- Tasks do not recur automatically.
+- Tasks and goals do not recur automatically.
 - Journal entries are plain text and limited to 10,000 characters.
 - There are no reminders, tags, attachments, collaboration features, or offline synchronization.
 

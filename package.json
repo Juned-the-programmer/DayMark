@@ -9,6 +9,7 @@
     "test": "vitest run",
     "preview": "vite preview",
     "setup:notion": "node scripts/setup-notion.mjs",
+    "upgrade:notion": "node scripts/upgrade-notion.mjs",
     "worker:check": "tsc -p worker/tsconfig.json",
     "worker:dev": "wrangler dev --config worker/wrangler.jsonc",
     "worker:deploy": "wrangler deploy --config worker/wrangler.jsonc"

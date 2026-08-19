@@ -49,6 +49,7 @@ main { width: min(1280px, calc(100% - 40px)); margin: 0 auto; }
 .panel-heading span { color: var(--muted); font-size: .8125rem; }
 
 .task-composer { display: grid; grid-template-columns: minmax(140px, 1fr) 138px 105px 38px; gap: 8px; padding: 14px; border-bottom: 1px solid var(--line); background: #fbfbfa; }
+.task-composer.goal-composer { grid-template-columns: minmax(140px, 1fr) 105px 38px; }
 input, select, textarea { border: 1px solid #cfd4dc; background: var(--paper); color: var(--ink); border-radius: 7px; }
 input, select { min-height: 38px; padding: 7px 10px; font-size: .875rem; }
 input::placeholder, textarea::placeholder { color: #9097a5; }
@@ -85,7 +86,13 @@ input::placeholder, textarea::placeholder { color: #9097a5; }
 .save-status { position: absolute; right: 14px; bottom: 12px; color: var(--muted); font-size: .75rem; background: rgba(255,255,255,.92); padding: 2px 5px; }
 .status-error { color: var(--red); }
 
-.planning-panel { margin: 30px 0 64px; }
+.planning-stack { display: grid; gap: 24px; margin: 30px 0 64px; }
+.period-goals-panel .empty-state { padding-block: 28px; }
+.period-goals-panel .task-row { grid-template-columns: 26px minmax(0, 1fr) 28px; gap: 9px; }
+.period-goals-panel .priority-select, .period-goals-panel .row-date { grid-column: 2; grid-row: 2; }
+.period-goals-panel .priority-select { width: 98px; }
+.period-goals-panel .row-date { width: 130px; margin-left: 108px; }
+.period-goals-panel .delete-button { grid-column: 3; grid-row: 1; }
 .task-groups { display: grid; }
 .task-group + .task-group { border-top: 5px solid var(--ground); }
 .task-group h3 { margin: 0; padding: 12px 14px 8px; color: var(--muted); background: #fbfbfa; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--line); }
@@ -127,10 +134,12 @@ input::placeholder, textarea::placeholder { color: #9097a5; }
   .datebar { min-height: 104px; gap: 10px; }
   .datebar h1 { font-size: 1.4rem; }
   .sync-label { display: none; }
-  .day-grid, .planning-panel { padding-top: 18px; gap: 18px; }
+  .day-grid { padding-top: 18px; gap: 18px; }
+  .planning-stack { margin-top: 18px; gap: 18px; }
   .side-column { gap: 18px; }
   .panel { border-radius: 10px; }
   .task-composer { grid-template-columns: 1fr 38px; }
+  .task-composer.goal-composer { grid-template-columns: 1fr 38px; }
   .task-composer input[type="date"], .task-composer select { display: block; }
   .task-composer input[type="date"] { grid-column: 1; }
   .task-composer select { grid-column: 1; }

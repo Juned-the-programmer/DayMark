@@ -1,11 +1,13 @@
 export type Period = "day" | "week" | "month";
 export type Priority = "High" | "Medium" | "Low";
 export type TaskStatus = "Open" | "Done";
+export type PlanType = "Daily" | "Weekly" | "Monthly";
 
 export interface Task {
   id: string;
   title: string;
   dueDate: string;
+  planType: PlanType;
   priority: Priority;
   status: TaskStatus;
   completedAt: string | null;
@@ -41,6 +43,7 @@ export interface TaskInput {
   title: string;
   dueDate: string;
   priority: Priority;
+  planType: PlanType;
 }
 
 export interface HabitInput {

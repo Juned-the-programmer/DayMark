@@ -11,6 +11,7 @@ interface Env {
 type Json = Record<string, unknown>;
 type Period = "day" | "week" | "month";
 type Priority = "High" | "Medium" | "Low";
+type PlanType = "Daily" | "Weekly" | "Monthly";
 
 interface NotionPage {
   id: string;
@@ -33,6 +34,7 @@ const NOTION_VERSION = "2026-03-11";
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[a-f\d-]{32,36}$/i;
 const PRIORITIES = new Set<Priority>(["High", "Medium", "Low"]);
+const PLAN_TYPES = new Set<PlanType>(["Daily", "Weekly", "Monthly"]);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -94,19 +96,15 @@ async function route(request: Request, env: Env): Promise<Response> {
 
 async function getDashboard(env: Env, date: string, period: Period) {
   const range = periodRange(date, period);
-  const taskFilter = period === "day"
-    ? {
-        or: [
-          { property: "Due Date", date: { equals: date } },
-          { and: [{ property: "Status", select: { equals: "Open" } }, { property: "Due Date", date: { before: date } }] },
-        ],
-      }
-    : {
-        or: [
-          { and: [{ property: "Due Date", date: { on_or_after: range.start } }, { property: "Due Date", date: { on_or_before: range.end } }] },
-          { and: [{ property: "Status", select: { equals: "Open" } }, { property: "Due Date", date: { before: range.start } }] },
-        ],
-      };
+  const completedStart = period === "day"
+    ? [periodRange(date, "week").start, periodRange(date, "month").start].sort()[0]
+    : range.start;
+  const taskFilter = {
+    or: [
+      { and: [{ property: "Status", select: { equals: "Open" } }, { property: "Due Date", date: { on_or_before: range.end } }] },
+      { and: [{ property: "Due Date", date: { on_or_after: completedStart } }, { property: "Due Date", date: { on_or_before: range.end } }] },
+    ],
+  };
   const [taskPages, habitPages] = await Promise.all([
     queryAll(env, env.TASKS_DATA_SOURCE_ID, { filter: taskFilter, sorts: [{ property: "Due Date", direction: "ascending" }] }),
     period === "day"
@@ -129,11 +127,12 @@ async function getDashboard(env: Env, date: string, period: Period) {
     journal = journalPages.length ? mapJournal(journalPages.sort((a, b) => b.last_edited_time.localeCompare(a.last_edited_time))[0]) : null;
   }
 
+  const referenceDate = period === "day" ? date : range.start;
   return {
     date,
     period,
     range,
-    tasks: taskPages.map((page) => mapTask(page, date)).sort(compareTasks),
+    tasks: taskPages.map((page) => mapTask(page, referenceDate)).filter((task) => taskVisible(task, date, period)).sort(compareTasks),
     habits,
     journal,
     syncedAt: new Date().toISOString(),
@@ -142,11 +141,12 @@ async function getDashboard(env: Env, date: string, period: Period) {
 
 async function createTask(env: Env, input: Json) {
   const title = textField(input.title, "Task title", 200);
-  const dueDate = validDate(input.dueDate);
+  const planType = validPlanType(input.planType ?? "Daily");
+  const dueDate = normalizeTargetDate(validDate(input.dueDate), planType);
   const priority = validPriority(input.priority);
   const page = await notion<NotionPage>(env, "/pages", "POST", {
     parent: { type: "data_source_id", data_source_id: env.TASKS_DATA_SOURCE_ID },
-    properties: taskProperties({ title, dueDate, priority, status: "Open" }),
+    properties: taskProperties({ title, dueDate, priority, planType, status: "Open" }),
   });
   return mapTask(page, indiaToday());
 }
@@ -154,7 +154,13 @@ async function createTask(env: Env, input: Json) {
 async function updateTask(env: Env, id: string, input: Json) {
   const properties: Json = {};
   if (input.title !== undefined) properties.Name = titleProperty(textField(input.title, "Task title", 200));
-  if (input.dueDate !== undefined) properties["Due Date"] = { date: { start: validDate(input.dueDate) } };
+  if (input.dueDate !== undefined || input.planType !== undefined) {
+    const current = await notion<NotionPage>(env, `/pages/${id}`);
+    const planType = validPlanType(input.planType ?? (propertySelect(current, "Plan Type") || "Daily"));
+    const dueDate = normalizeTargetDate(validDate(input.dueDate ?? propertyDate(current, "Due Date")), planType);
+    properties["Due Date"] = { date: { start: dueDate } };
+    properties["Plan Type"] = { select: { name: planType } };
+  }
   if (input.priority !== undefined) properties.Priority = { select: { name: validPriority(input.priority) } };
   if (input.status !== undefined) {
     if (input.status !== "Open" && input.status !== "Done") throw new HttpError(400, "Invalid task status.");
@@ -277,14 +283,16 @@ async function notion<T = unknown>(env: Env, path: string, method = "GET", bodyV
 function mapTask(page: NotionPage, referenceDate: string) {
   const dueDate = propertyDate(page, "Due Date");
   const status = propertySelect(page, "Status") === "Done" ? "Done" : "Open";
+  const planType = validPlanType(propertySelect(page, "Plan Type") || "Daily");
   return {
     id: page.id,
     title: propertyText(page, "Name"),
     dueDate,
+    planType,
     priority: validPriority(propertySelect(page, "Priority") || "Medium"),
     status,
     completedAt: propertyDate(page, "Completed At") || null,
-    overdue: status === "Open" && dueDate < referenceDate,
+    overdue: isTaskOverdue({ dueDate, planType, status }, referenceDate),
   };
 }
 
@@ -342,11 +350,12 @@ function richTextProperty(value: string) {
   return { rich_text: chunks.map((content) => ({ type: "text", text: { content } })) };
 }
 
-function taskProperties(input: { title: string; dueDate: string; priority: Priority; status: "Open" | "Done" }) {
+function taskProperties(input: { title: string; dueDate: string; priority: Priority; planType: PlanType; status: "Open" | "Done" }) {
   return {
     Name: titleProperty(input.title),
     "Due Date": { date: { start: input.dueDate } },
     Priority: { select: { name: input.priority } },
+    "Plan Type": { select: { name: input.planType } },
     Status: { select: { name: input.status } },
     "Completed At": { date: null },
   };
@@ -357,6 +366,19 @@ function compareTasks(a: ReturnType<typeof mapTask>, b: ReturnType<typeof mapTas
   if (a.status !== b.status) return a.status === "Open" ? -1 : 1;
   if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
   return priority[a.priority] - priority[b.priority] || a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title);
+}
+
+function taskVisible(task: ReturnType<typeof mapTask>, date: string, period: Period) {
+  const range = periodRange(date, period);
+  if (period === "day") {
+    if (task.planType === "Daily") return task.dueDate === date || task.overdue;
+    const target = periodRange(date, task.planType === "Weekly" ? "week" : "month").start;
+    return task.dueDate === target || task.overdue;
+  }
+  const expectedType: PlanType = period === "week" ? "Weekly" : "Monthly";
+  if (task.planType === expectedType) return task.dueDate === range.start || task.overdue;
+  if (task.planType !== "Daily") return false;
+  return (task.dueDate >= range.start && task.dueDate <= range.end) || task.overdue;
 }
 
 function periodRange(value: string, period: Period) {
@@ -373,6 +395,20 @@ function periodRange(value: string, period: Period) {
     start: isoDate(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 12))),
     end: isoDate(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 12))),
   };
+}
+
+function normalizeTargetDate(value: string, planType: PlanType) {
+  if (planType === "Daily") return value;
+  return periodRange(value, planType === "Weekly" ? "week" : "month").start;
+}
+
+function targetEndDate(value: string, planType: PlanType) {
+  if (planType === "Daily") return value;
+  return periodRange(value, planType === "Weekly" ? "week" : "month").end;
+}
+
+function isTaskOverdue(task: { dueDate: string; planType: PlanType; status: "Open" | "Done" }, referenceDate: string) {
+  return task.status === "Open" && targetEndDate(task.dueDate, task.planType) < referenceDate;
 }
 
 function shiftDate(value: string, days: number) {
@@ -409,6 +445,11 @@ function validId(value: string): string {
 function validPriority(value: unknown): Priority {
   if (typeof value !== "string" || !PRIORITIES.has(value as Priority)) throw new HttpError(400, "Invalid priority.");
   return value as Priority;
+}
+
+function validPlanType(value: unknown): PlanType {
+  if (typeof value !== "string" || !PLAN_TYPES.has(value as PlanType)) throw new HttpError(400, "Invalid plan type.");
+  return value as PlanType;
 }
 
 function textField(value: unknown, label: string, max: number): string {
@@ -458,4 +499,4 @@ function json(value: unknown, status = 200, headers: Record<string, string> = {}
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
 }
 
-export const __test = { periodRange, shiftDate, mapTask, mapHabit, compareTasks, validDate, corsHeaders };
+export const __test = { periodRange, shiftDate, mapTask, mapHabit, compareTasks, validDate, corsHeaders, normalizeTargetDate, isTaskOverdue, taskVisible };

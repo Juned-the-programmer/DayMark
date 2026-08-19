@@ -21,6 +21,7 @@ const schemas = [
       Name: { title: {} },
       "Due Date": { date: {} },
       Priority: { select: { options: [{ name: "High", color: "red" }, { name: "Medium", color: "yellow" }, { name: "Low", color: "gray" }] } },
+      "Plan Type": { select: { options: [{ name: "Daily", color: "blue" }, { name: "Weekly", color: "yellow" }, { name: "Monthly", color: "purple" }] } },
       Status: { select: { options: [{ name: "Open", color: "blue" }, { name: "Done", color: "green" }] } },
       "Completed At": { date: {} },
     },

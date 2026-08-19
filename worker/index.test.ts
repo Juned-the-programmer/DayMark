@@ -21,6 +21,31 @@ describe("worker domain behavior", () => {
       "Completed At": { date: null },
     }), "2026-09-18");
     expect(task).toMatchObject({ dueDate: "2026-09-17", overdue: true });
+    expect(task.planType).toBe("Daily");
+  });
+
+  it("normalizes goal targets and waits for the full period before carry-over", () => {
+    expect(__test.normalizeTargetDate("2026-09-18", "Weekly")).toBe("2026-09-14");
+    expect(__test.normalizeTargetDate("2026-09-18", "Monthly")).toBe("2026-09-01");
+    expect(__test.isTaskOverdue({ dueDate: "2026-09-14", planType: "Weekly", status: "Open" }, "2026-09-20")).toBe(false);
+    expect(__test.isTaskOverdue({ dueDate: "2026-09-14", planType: "Weekly", status: "Open" }, "2026-09-21")).toBe(true);
+  });
+
+  it("shows only the matching goal type alongside daily scheduled work", () => {
+    const weekly = __test.mapTask(page("weekly", {
+      Name: title("Ship weekly review"),
+      "Due Date": { date: { start: "2026-09-14" } },
+      "Plan Type": { select: { name: "Weekly" } },
+      Priority: { select: { name: "High" } },
+      Status: { select: { name: "Open" } },
+      "Completed At": { date: null },
+    }), "2026-09-14");
+    const monthly = { ...weekly, id: "monthly", planType: "Monthly" as const, dueDate: "2026-09-01" };
+    expect(__test.taskVisible(weekly, "2026-09-18", "week")).toBe(true);
+    expect(__test.taskVisible(monthly, "2026-09-18", "week")).toBe(false);
+    expect(__test.taskVisible(monthly, "2026-09-18", "month")).toBe(true);
+    expect(__test.taskVisible({ ...weekly, dueDate: "2026-09-07", overdue: true }, "2026-09-18", "week")).toBe(true);
+    expect(__test.taskVisible({ ...weekly, dueDate: "2026-09-07", status: "Done", overdue: false }, "2026-09-18", "week")).toBe(false);
   });
 
   it("calculates a streak ending yesterday when today is incomplete", () => {

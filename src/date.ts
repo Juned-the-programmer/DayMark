@@ -1,4 +1,4 @@
-import type { Period, Priority, Task } from "./types";
+import type { Period, PlanType, Priority, Task } from "./types";
 
 export const TIME_ZONE = "Asia/Kolkata";
 
@@ -44,6 +44,20 @@ export function periodRange(value: string, period: Period): { start: string; end
   return { start: toISODate(start), end: toISODate(end) };
 }
 
+export function normalizeTargetDate(value: string, planType: PlanType): string {
+  if (planType === "Daily") return value;
+  return periodRange(value, planType === "Weekly" ? "week" : "month").start;
+}
+
+export function targetRange(value: string, planType: PlanType): { start: string; end: string } {
+  if (planType === "Daily") return { start: value, end: value };
+  return periodRange(value, planType === "Weekly" ? "week" : "month");
+}
+
+export function isTaskOverdue(task: Pick<Task, "dueDate" | "planType" | "status">, referenceDate: string): boolean {
+  return task.status === "Open" && targetRange(task.dueDate, task.planType).end < referenceDate;
+}
+
 export function formatLong(value: string): string {
   return new Intl.DateTimeFormat("en-IN", {
     timeZone: "UTC",
@@ -72,6 +86,12 @@ export function periodLabel(value: string, period: Period): string {
     month: "long",
     year: "numeric",
   }).format(parseDate(value));
+}
+
+export function targetLabel(value: string, planType: PlanType): string {
+  if (planType === "Daily") return formatShort(value);
+  if (planType === "Weekly") return periodLabel(value, "week");
+  return periodLabel(value, "month");
 }
 
 const priorityOrder: Record<Priority, number> = { High: 0, Medium: 1, Low: 2 };
