@@ -1,0 +1,6 @@
+NOTION_TOKEN=ntn_replace_me
+TASKS_DATA_SOURCE_ID=replace_me
+HABITS_DATA_SOURCE_ID=replace_me
+CHECKINS_DATA_SOURCE_ID=replace_me
+JOURNAL_DATA_SOURCE_ID=replace_me
+APP_ACCESS_KEY=generate_a_long_random_value
